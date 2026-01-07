@@ -1,4 +1,5 @@
 require 'pathname'
+require 'fileutils'
 
 module Procsd
   class Generator
@@ -11,7 +12,7 @@ module Procsd
       @target_name = "#{app_name}.target"
     end
 
-    def generate_units(save: false)
+    def generate_units(save: false, user_mode: false)
       services = {}
       @config[:processes].each do |name, values|
         commands = values["commands"]
@@ -19,28 +20,35 @@ module Procsd
         content = generate_template("service", @options.merge(
           "target_name" => target_name,
           "commands" => commands,
-          "environment" => @config[:environment]
+          "environment" => @config[:environment],
+          "user_mode" => user_mode
         ))
 
         services[name] = { content: content, size: size }
       end
 
       if save
-        puts "Creating app units files in the systemd directory (#{DEFAULT_SYSTEMD_DIR})..."
+        systemd_dir = @config[:systemd_dir]
+        puts "Creating app units files in the systemd directory (#{systemd_dir})..."
+
+        # Ensure user systemd directory exists
+        FileUtils.mkdir_p(systemd_dir) if user_mode
+
         wants = []
         services.each do |service_name, values|
           values[:size].times do |i|
             unit_name = "#{app_name}-#{service_name}.#{i + 1}.service"
             wants << unit_name
-            write_file!(File.join(@config[:systemd_dir], unit_name), values[:content])
+            write_file!(File.join(systemd_dir, unit_name), values[:content], user_mode: user_mode)
           end
         end
 
         target_content = generate_template("target", {
           "app" => app_name,
-          "wants" => wants.join(" ")
+          "wants" => wants.join(" "),
+          "user_mode" => user_mode
         })
-        write_file!(File.join(@config[:systemd_dir], target_name), target_content)
+        write_file!(File.join(systemd_dir, target_name), target_content, user_mode: user_mode)
       else
         services
       end
@@ -102,14 +110,21 @@ module Procsd
       ERB.new(content, trim_mode: "-").result(b)
     end
 
-    def write_file!(dest_path, content)
-      temp_path = File.join("/tmp", Pathname.new(dest_path).basename.to_s)
-      File.write(temp_path, content)
-      if system "sudo", "mv", temp_path, dest_path
+    def write_file!(dest_path, content, user_mode: false)
+      if user_mode
+        File.write(dest_path, content)
         puts "Create: #{dest_path}"
+      else
+        temp_path = File.join("/tmp", Pathname.new(dest_path).basename.to_s)
+        begin
+          File.write(temp_path, content)
+          if system "sudo", "mv", temp_path, dest_path
+            puts "Create: #{dest_path}"
+          end
+        ensure
+          File.delete(temp_path) if File.exist?(temp_path)
+        end
       end
-    ensure
-      File.delete(temp_path) if File.exist? temp_path
     end
   end
 end

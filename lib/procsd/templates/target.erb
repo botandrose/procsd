@@ -2,4 +2,4 @@
 Wants=<%= config["wants"] %>
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=<%= config["user_mode"] ? "default.target" : "multi-user.target" %>

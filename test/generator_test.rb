@@ -92,7 +92,7 @@ class GeneratorTest < Minitest::Test
 
       ExecStart=/bin/bash -lc 'bundle exec puma'
       ExecStop=/bin/bash -lc 'bundle exec pumactl stop'
-      ExecReload=/bin/bash -lc 'bundle exec pumactl phased-restart'
+      ExecReload=bundle exec pumactl phased-restart
 
       RuntimeMaxSec=86400
 
@@ -179,6 +179,33 @@ class GeneratorTest < Minitest::Test
       "web" => { content: web_content, size: 2 },
       "worker" => { content: worker_content, size: 3 }
     }, services)
+  end
+
+  def test_generate_units_user_mode
+    generator = Procsd::Generator.new(@basic_config, @basic_options)
+    services = generator.generate_units(save: false, user_mode: true)
+
+    assert_equal({ "web" => { content: <<~SYSTEMD, size: 1 } }, services)
+      [Unit]
+      PartOf=myapp.target
+
+      [Service]
+      Type=simple
+      WorkingDirectory=/home/deploy/myapp
+
+      ExecStart=/bin/bash -lc 'bundle exec puma -C config/puma.rb'
+
+
+      Restart=always
+      RestartSec=1
+      TimeoutStopSec=30
+      KillMode=mixed
+      StandardInput=null
+      SyslogIdentifier=%p
+
+      Environment="PORT=3000"
+      Environment="RAILS_ENV=production"
+    SYSTEMD
   end
 
   def test_generate_sudoers_without_reload

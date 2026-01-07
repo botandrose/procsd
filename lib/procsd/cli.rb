@@ -37,7 +37,7 @@ module Procsd
         perform_create
       else
         if options["or-restart"]
-          restart
+          perform_update
         else
           say("App target `#{target_name}` already exists", :red)
         end
@@ -58,11 +58,11 @@ module Procsd
 
       # 1. Regenerate all service files + target
       generator = Generator.new(@config, options)
-      generator.generate_units(save: true)
+      generator.generate_units(save: true, user_mode: user_mode?)
       say("Regenerated service files", :green)
 
       # 2. daemon-reload
-      if execute %w(sudo systemctl daemon-reload)
+      if execute(systemctl_command + %w(daemon-reload))
         say("Reloaded configuration (daemon-reload)", :green)
       end
 
@@ -71,7 +71,7 @@ module Procsd
       # - Starts new services that weren't running
       # - Reloads services with ExecReload defined
       # - Restarts services without ExecReload
-      if execute %W(sudo systemctl reload-or-restart #{app_name}-* --all)
+      if execute(systemctl_command + %W(reload-or-restart #{app_name}-* --all))
         say("Reloaded app services", :green)
       end
 
@@ -79,7 +79,7 @@ module Procsd
       cleanup_orphaned_services
 
       # 5. Final daemon-reload
-      if execute %w(sudo systemctl daemon-reload)
+      if execute(systemctl_command + %w(daemon-reload))
         say("Cleaned up configuration", :green)
       end
 
@@ -96,17 +96,20 @@ module Procsd
 
         units.each do |filename|
           path = File.join(systemd_dir, filename)
-          execute %W(sudo rm #{path}) and say "Deleted: #{path}" if File.exist?(path)
+          rm_command = user_mode? ? %W(rm #{path}) : %W(sudo rm #{path})
+          execute(rm_command) and say "Deleted: #{path}" if File.exist?(path)
         end
 
-        if execute %w(sudo systemctl daemon-reload)
+        if execute(systemctl_command + %w(daemon-reload))
           say("Reloaded configuraion (daemon-reload)", :green)
         end
         say("App services were stopped, disabled and removed", :green)
 
-        sudoers_file_path = "#{SUDOERS_DIR}/#{app_name}"
-        if system "sudo", "test", "-e", sudoers_file_path
-          say("Sudoers file removed", :green) if execute %W(sudo rm #{sudoers_file_path})
+        unless user_mode?
+          sudoers_file_path = "#{SUDOERS_DIR}/#{app_name}"
+          if system "sudo", "test", "-e", sudoers_file_path
+            say("Sudoers file removed", :green) if execute %W(sudo rm #{sudoers_file_path})
+          end
         end
 
         if @config[:nginx]
@@ -130,7 +133,7 @@ module Procsd
       say_target_not_exists and return unless target_exist?
 
       say "Note: app target #{target_name} already enabled" if target_enabled?
-      if execute %W(sudo systemctl enable #{target_name})
+      if execute(systemctl_command + %W(enable #{target_name}))
         say("Enabled app target #{target_name}", :green)
       end
     end
@@ -141,7 +144,7 @@ module Procsd
       say_target_not_exists and return unless target_exist?
 
       say "Note: app target #{target_name} already disabled" if !target_enabled?
-      if execute %W(sudo systemctl disable #{target_name})
+      if execute(systemctl_command + %W(disable #{target_name}))
         say("Disabled app target #{target_name}", :green)
       end
     end
@@ -154,12 +157,12 @@ module Procsd
       if service_name
         full_name = to_full_name(service_name)
         say "Note: app service #{full_name} already started/active" if service_active?(full_name)
-        if execute %W(sudo systemctl start #{full_name} --all)
+        if execute(systemctl_command + %W(start #{full_name} --all))
           say("Started app service (#{full_name})", :green)
         end
       else
         say "Note: app target #{target_name} already started/active" if target_active?
-        if execute %W(sudo systemctl start #{target_name})
+        if execute(systemctl_command + %W(start #{target_name}))
           say("Started app services (#{target_name})", :green)
         end
       end
@@ -173,12 +176,12 @@ module Procsd
       if service_name
         full_name = to_full_name(service_name)
         say "Note: app service #{full_name} already stopped/inactive" if !service_active?(full_name)
-        if execute %W(sudo systemctl stop #{full_name} --all)
+        if execute(systemctl_command + %W(stop #{full_name} --all))
           say("Stopped app service (#{full_name})", :green)
         end
       else
         say "Note: app target #{target_name} already stopped/inactive" if !target_active?
-        if execute %W(sudo systemctl stop #{target_name})
+        if execute(systemctl_command + %W(stop #{target_name}))
           say("Stopped app services (#{target_name})", :green)
         end
       end
@@ -191,7 +194,7 @@ module Procsd
 
       if service_name
         full_name = to_full_name(service_name)
-        if execute %W(sudo systemctl reload-or-restart #{full_name} --all)
+        if execute(systemctl_command + %W(reload-or-restart #{full_name} --all))
           say("Restarted app service (#{full_name})", :green)
         end
       else
@@ -200,9 +203,9 @@ module Procsd
         # because of systemd bug https://github.com/systemd/systemd/issues/10638
         success =
           if has_reload?
-            execute %W(sudo systemctl reload-or-restart #{app_name}-* --all)
+            execute(systemctl_command + %W(reload-or-restart #{app_name}-* --all))
           else
-            execute %W(sudo systemctl restart #{target_name})
+            execute(systemctl_command + %W(restart #{target_name}))
           end
 
         if success
@@ -218,10 +221,11 @@ module Procsd
       preload!
       say_target_not_exists and return unless target_exist?
 
+      base_cmd = user_mode? ? %w(systemctl --user) : %w(systemctl)
       if options["short"]
-        command = %w(systemctl list-units --no-pager --no-legend --all)
+        command = base_cmd + %w(list-units --no-pager --no-legend --all)
       else
-        command = %w(systemctl status --no-pager --output short-iso --all)
+        command = base_cmd + %w(status --no-pager --output short-iso --all)
       end
 
       command << (options["target"] ? target_name : to_full_name(service_name))
@@ -253,7 +257,8 @@ module Procsd
       preload!
       say_target_not_exists and return unless target_exist?
 
-      command = %W(systemctl list-dependencies #{target_name})
+      base_cmd = user_mode? ? %w(systemctl --user) : %w(systemctl)
+      command = base_cmd + %W(list-dependencies #{target_name})
       execute command, type: :exec
     end
 
@@ -328,9 +333,9 @@ module Procsd
       return unless valid_create_options?(options)
 
       generator = Generator.new(@config, options)
-      generator.generate_units(save: true)
+      generator.generate_units(save: true, user_mode: user_mode?)
 
-      if execute %w(sudo systemctl daemon-reload)
+      if execute(systemctl_command + %w(daemon-reload))
         say("Reloaded configuraion (daemon-reload)", :green)
       end
 
@@ -342,19 +347,35 @@ module Procsd
       else
         say("App services were created and enabled. Run `start` to start them", :green)
       end
+    end
 
-      if options["add-to-sudoers"]
-        if Dir.exist?(SUDOERS_DIR)
-          if generator.generate_sudoers(options["user"], has_reload: has_reload?, save: true)
-            say("Sudoers file #{SUDOERS_DIR}/#{app_name} was created", :green)
+    def perform_update
+      return unless valid_create_options?(options)
+
+      generator = Generator.new(@config, options)
+      generator.generate_units(save: true, user_mode: user_mode?)
+
+      if execute(systemctl_command + %w(daemon-reload))
+        say("Reloaded configuraion (daemon-reload)", :green)
+      end
+
+      restart
+      say("App services were updated and restarted", :green)
+
+      unless user_mode?
+        if options["add-to-sudoers"]
+          if Dir.exist?(SUDOERS_DIR)
+            if generator.generate_sudoers(options["user"], has_reload: has_reload?, save: true)
+              say("Sudoers file #{SUDOERS_DIR}/#{app_name} was created", :green)
+            end
+          else
+            say("Directory #{SUDOERS_DIR} does not exists, sudoers file wasn't created", :red)
           end
         else
-          say("Directory #{SUDOERS_DIR} does not exists, sudoers file wasn't created", :red)
+          say "Note: add following line to the sudoers file (`$ sudo visudo`) if you don't " \
+            "want to type password each time for start/stop/restart commands:"
+          puts generator.generate_sudoers(options["user"], has_reload: has_reload?)
         end
-      else
-        say "Note: add following line to the sudoers file (`$ sudo visudo`) if you don't " \
-          "want to type password each time for start/stop/restart commands:"
-        puts generator.generate_sudoers(options["user"], has_reload: has_reload?)
       end
 
       if nginx = @config[:nginx]
@@ -415,12 +436,13 @@ module Procsd
 
       orphans.each do |service|
         # Stop the service
-        execute %W(sudo systemctl stop #{service})
+        execute(systemctl_command + %W(stop #{service}))
         say("Stopped orphaned service: #{service}", :yellow)
 
         # Remove the file
         path = File.join(systemd_dir, service)
-        execute %W(sudo rm #{path})
+        rm_command = user_mode? ? %W(rm #{path}) : %W(sudo rm #{path})
+        execute(rm_command)
         say("Removed: #{path}", :yellow)
       end
     end
@@ -457,15 +479,27 @@ module Procsd
     end
 
     def target_enabled?
-      system "systemctl", "is-enabled", "--quiet", target_name
+      if user_mode?
+        system "systemctl", "--user", "is-enabled", "--quiet", target_name
+      else
+        system "systemctl", "is-enabled", "--quiet", target_name
+      end
     end
 
     def target_active?
-      system "systemctl", "is-active", "--quiet", target_name
+      if user_mode?
+        system "systemctl", "--user", "is-active", "--quiet", target_name
+      else
+        system "systemctl", "is-active", "--quiet", target_name
+      end
     end
 
     def service_active?(service_name)
-      system "systemctl", "is-active", "--quiet", service_name
+      if user_mode?
+        system "systemctl", "--user", "is-active", "--quiet", service_name
+      else
+        system "systemctl", "is-active", "--quiet", service_name
+      end
     end
 
     def target_name
@@ -526,8 +560,17 @@ module Procsd
       @config[:environment] = procsd["environment"] || {}
       @config[:dev_environment] = procsd["dev_environment"] || {}
 
-      @config[:systemd_dir] = procsd["systemd_dir"] || DEFAULT_SYSTEMD_DIR
+      @config[:user_mode] = procsd["user_mode"] || false
+      @config[:systemd_dir] = procsd["systemd_dir"] || (@config[:user_mode] ? USER_SYSTEMD_DIR : DEFAULT_SYSTEMD_DIR)
       @config[:nginx] = procsd["nginx"]
+    end
+
+    def user_mode?
+      @config[:user_mode]
+    end
+
+    def systemctl_command
+      user_mode? ? %w(systemctl --user) : %w(sudo systemctl)
     end
   end
 end
