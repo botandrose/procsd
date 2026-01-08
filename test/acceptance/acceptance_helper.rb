@@ -20,6 +20,9 @@ module AcceptanceHelper
     end
 
     def start
+      # Always rebuild gem to pick up latest changes
+      rebuild_gem
+
       # Build image if needed
       unless image_exists?
         build_image
@@ -110,14 +113,15 @@ module AcceptanceHelper
       system("podman", "image", "exists", IMAGE_NAME, out: File::NULL, err: File::NULL)
     end
 
-    def build_image
-      # Build the gem to temp directory
+    def rebuild_gem
       FileUtils.mkdir_p(GEM_BUILD_DIR)
       gem_path = File.join(GEM_BUILD_DIR, "procsd-test.gem")
       Dir.chdir(GEM_ROOT) do
         system("gem", "build", "procsd.gemspec", "-o", gem_path, out: File::NULL, err: File::NULL)
       end
+    end
 
+    def build_image
       cmd = ["podman", "build", "-t", IMAGE_NAME, "-f", DOCKERFILE_PATH, File.dirname(DOCKERFILE_PATH)]
       output, status = Open3.capture2e(*cmd)
       raise "Failed to build image: #{output}" unless status.success?

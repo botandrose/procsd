@@ -44,6 +44,48 @@ module Procsd
       end
     end
 
+    desc "update", "Update app services to match current configuration"
+    option :user, aliases: :u, type: :string, banner: "$USER", default: ENV["USER"]
+    option :dir,  aliases: :d, type: :string, banner: "$PWD", default: ENV["PWD"]
+    option :path, aliases: :p, type: :string, banner: "$PATH", default: `/bin/bash -ilc 'echo $PATH'`.strip
+    def update
+      preload!
+      unless target_exist?
+        say_target_not_exists
+        exit 1
+      end
+      return unless valid_create_options?(options)
+
+      # 1. Regenerate all service files + target
+      generator = Generator.new(@config, options)
+      generator.generate_units(save: true)
+      say("Regenerated service files", :green)
+
+      # 2. daemon-reload
+      if execute %w(sudo systemctl daemon-reload)
+        say("Reloaded configuration (daemon-reload)", :green)
+      end
+
+      # 3. reload-or-restart all services
+      # Use glob pattern (not target) because:
+      # - Starts new services that weren't running
+      # - Reloads services with ExecReload defined
+      # - Restarts services without ExecReload
+      if execute %W(sudo systemctl reload-or-restart #{app_name}-* --all)
+        say("Reloaded app services", :green)
+      end
+
+      # 4. Find and clean up orphaned services
+      cleanup_orphaned_services
+
+      # 5. Final daemon-reload
+      if execute %w(sudo systemctl daemon-reload)
+        say("Cleaned up configuration", :green)
+      end
+
+      say("App services updated", :green)
+    end
+
     desc "destroy", "Stop, disable and remove app services"
     def destroy
       preload!
@@ -358,6 +400,29 @@ module Procsd
 
     def has_reload?
       @config[:processes].any? { |name, values| values.dig("commands", "ExecReload") }
+    end
+
+    def cleanup_orphaned_services
+      # Get list of service files that should exist based on current config
+      expected_services = units.reject { |u| u.end_with?(".target") }
+
+      # Get list of service files that actually exist on disk
+      existing_pattern = File.join(systemd_dir, "#{app_name}-*.service")
+      existing_services = Dir.glob(existing_pattern).map { |f| File.basename(f) }
+
+      # Find orphans (exist on disk but not in config)
+      orphans = existing_services - expected_services
+
+      orphans.each do |service|
+        # Stop the service
+        execute %W(sudo systemctl stop #{service})
+        say("Stopped orphaned service: #{service}", :yellow)
+
+        # Remove the file
+        path = File.join(systemd_dir, service)
+        execute %W(sudo rm #{path})
+        say("Removed: #{path}", :yellow)
+      end
     end
 
     def units
