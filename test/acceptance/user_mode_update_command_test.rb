@@ -40,6 +40,10 @@ class UserModeUpdateCommandTest < Minitest::Test
     assert container.service_enabled?("myapp.target"),
       "Target should be enabled"
 
+    # Verify linger was auto-enabled so services start at boot
+    assert container.file_exists?("/var/lib/systemd/linger/testuser"),
+      "Linger should be enabled for testuser"
+
     # Verify service content includes environment
     service_content = container.read_file("#{user_systemd_dir}/myapp-web.1.service")
     assert_includes service_content, 'Environment="PORT=3000"'

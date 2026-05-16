@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y \
     systemd-sysv \
     dbus \
     dbus-user-session \
+    polkitd \
     ruby \
     ruby-dev \
     build-essential \
@@ -28,10 +29,6 @@ RUN rm -f /lib/systemd/system/multi-user.target.wants/* \
 # Create a test user that can run sudo without password
 RUN useradd -m -s /bin/bash testuser && \
     echo "testuser ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/testuser
-
-# Enable lingering for testuser so user systemd starts at boot
-RUN mkdir -p /var/lib/systemd/linger && \
-    touch /var/lib/systemd/linger/testuser
 
 # Create user systemd directory
 RUN mkdir -p /home/testuser/.config/systemd/user && \

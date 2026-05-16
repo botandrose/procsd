@@ -1,4 +1,5 @@
 require 'yaml'
+require 'etc'
 require_relative 'generator'
 
 module Procsd
@@ -59,6 +60,7 @@ module Procsd
       # 1. Regenerate all service files + target
       generator = Generator.new(@config, options)
       generator.generate_units(save: true, user_mode: user_mode?)
+      ensure_linger_enabled!
       say("Regenerated service files", :green)
 
       # 2. daemon-reload
@@ -334,6 +336,7 @@ module Procsd
 
       generator = Generator.new(@config, options)
       generator.generate_units(save: true, user_mode: user_mode?)
+      ensure_linger_enabled!
 
       if execute(systemctl_command + %w(daemon-reload))
         say("Reloaded configuraion (daemon-reload)", :green)
@@ -354,6 +357,7 @@ module Procsd
 
       generator = Generator.new(@config, options)
       generator.generate_units(save: true, user_mode: user_mode?)
+      ensure_linger_enabled!
 
       if execute(systemctl_command + %w(daemon-reload))
         say("Reloaded configuraion (daemon-reload)", :green)
@@ -567,6 +571,23 @@ module Procsd
 
     def user_mode?
       @config[:user_mode]
+    end
+
+    def ensure_linger_enabled!
+      return unless user_mode?
+      user = Etc.getpwuid(Process.uid).name
+      return if File.exist?("/var/lib/systemd/linger/#{user}")
+
+      # loginctl without sudo works in real SSH sessions via polkit; fall back to sudo otherwise.
+      enabled =
+        system("loginctl", "enable-linger", out: File::NULL, err: File::NULL) ||
+        system("sudo", "loginctl", "enable-linger", user)
+
+      if enabled
+        say("Enabled systemd linger for #{user} (services persist after logout and start at boot)", :green)
+      else
+        say("Failed to enable linger. Services won't start at boot. Run `sudo loginctl enable-linger #{user}` manually.", :red)
+      end
     end
 
     def systemctl_command
