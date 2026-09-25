@@ -70,7 +70,9 @@ class GeneratorTest < Minitest::Test
           "ExecStart" => "bundle exec puma",
           "ExecStop" => "bundle exec pumactl stop",
           "ExecReload" => "bundle exec pumactl phased-restart",
-          "RuntimeMaxSec" => "86400"
+          "RuntimeMaxSec" => "86400",
+          "MemoryMax" => "5G",
+          "MemorySwapMax" => "0"
         },
         "size" => 1
       }
@@ -95,6 +97,8 @@ class GeneratorTest < Minitest::Test
       ExecReload=bundle exec pumactl phased-restart
 
       RuntimeMaxSec=86400
+      MemoryMax=5G
+      MemorySwapMax=0
 
       Restart=always
       RestartSec=1

@@ -135,6 +135,8 @@ class CLITest < Minitest::Test
             ExecStop: bundle exec pumactl stop
             ExecReload: bundle exec pumactl phased-restart
             RuntimeMaxSec: 86400
+            MemoryMax: 5G
+            MemorySwapMax: 0
       YAML
 
       cli = Procsd::CLI.new
@@ -145,7 +147,9 @@ class CLITest < Minitest::Test
         "ExecStart" => "bundle exec puma",
         "ExecStop" => "bundle exec pumactl stop",
         "ExecReload" => "bundle exec pumactl phased-restart",
-        "RuntimeMaxSec" => 86400
+        "RuntimeMaxSec" => 86400,
+        "MemoryMax" => "5G",
+        "MemorySwapMax" => 0
       }, config[:processes]["web"]["commands"])
     end
   end

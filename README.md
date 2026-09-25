@@ -547,6 +547,17 @@ processes:
     RuntimeMaxSec: 12h
 ```
 
+* You can also cap a process's memory with [MemoryMax](https://www.freedesktop.org/software/systemd/man/systemd.resource-control.html#MemoryMax=bytes) and [MemorySwapMax](https://www.freedesktop.org/software/systemd/man/systemd.resource-control.html#MemorySwapMax=bytes). A process that goes over is killed and restarted instead of starving the others:
+
+```yml
+app: sample_app
+processes:
+  worker:
+    ExecStart: bundle exec sidekiq -e production
+    MemoryMax: 5G
+    MemorySwapMax: 0
+```
+
 * If you use Nginx integration but default Nginx requests timeout (60s) is too small for you, [you can set a custom timeout](https://serverfault.com/a/777753) in the global Nginx config.
 
 

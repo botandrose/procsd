@@ -25,6 +25,12 @@ ExecReload=<%= reload %>
 <% if max_sec = config["commands"]["RuntimeMaxSec"] -%>
 RuntimeMaxSec=<%= max_sec %>
 <% end -%>
+<% if memory_max = config["commands"]["MemoryMax"] -%>
+MemoryMax=<%= memory_max %>
+<% end -%>
+<% if memory_swap_max = config["commands"]["MemorySwapMax"] -%>
+MemorySwapMax=<%= memory_swap_max %>
+<% end -%>
 
 Restart=always
 RestartSec=1
